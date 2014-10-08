@@ -145,6 +145,133 @@ ReactiveValues <- R6Class(
     }
   )
 )
+ReactiveValues2 <- R6Class(
+  'ReactiveValues2',
+  portable = FALSE,
+  public = list(
+    ## CHANGE JT //
+    .hashs = "environment",
+    ## // CHANGE JT 
+    # For debug purposes
+    .label = character(0),
+    .values = 'environment',
+    .dependents = 'environment',
+    # Dependents for the list of all names, including hidden
+    .namesDeps = 'Dependents',
+    # Dependents for all values, including hidden
+    .allValuesDeps = 'Dependents',
+    # Dependents for all values
+    .valuesDeps = 'Dependents',
+    
+    initialize = function() {
+      .label <<- paste('reactiveValues',
+        p_randomInt(1000, 10000),
+        sep="")
+      ## CHANGE JT //
+      .hashs <<- new.env(parent=emptyenv())
+      ## // CHANGE JT
+      .values <<- new.env(parent=emptyenv())
+      .dependents <<- new.env(parent=emptyenv())
+      .namesDeps <<- Dependents$new()
+      .allValuesDeps <<- Dependents$new()
+      .valuesDeps <<- Dependents$new()
+    },
+    get = function(key) {
+      ctx <- .getReactiveEnvironment()$currentContext()
+      dep.key <- paste(key, ':', ctx$id, sep='')
+      if (!exists(dep.key, where=.dependents, inherits=FALSE)) {
+        .graphDependsOn(ctx$id, sprintf('%s$%s', .label, key))
+        assign(dep.key, ctx, pos=.dependents, inherits=FALSE)
+        ctx$onInvalidate(function() {
+            rm(list=dep.key, pos=.dependents, inherits=FALSE)
+          })
+      }
+      
+      if (!exists(key, where=.values, inherits=FALSE))
+        NULL
+      else 
+        base::get(key, pos=.values, inherits=FALSE)
+    },
+    set = function(key, value) {
+      hidden <- substr(key, 1, 1) == "."
+      
+      if (exists(key, where=.values, inherits=FALSE)) {
+        if (identical(base::get(key, pos=.values, inherits=FALSE), value)) {
+          return(invisible())
+        }
+      }
+      else {
+        .namesDeps$invalidate()
+      }
+      
+      if (hidden)
+        .allValuesDeps$invalidate()
+      else
+        .valuesDeps$invalidate()
+      
+      assign(key, value, pos=.values, inherits=FALSE)
+      ## CHANGE JT //
+      ## Make sure hash value is computed and stored
+#      assign(key, digest::digest(value), pos=.hashs, inherits=FALSE)
+      ## --> Don't know how to access that
+      key_hash <- paste0(key, "_hash")
+      value_hash <- digest::digest(value)
+      assign(key_hash, value_hash, pos=.values, inherits=FALSE)
+      message(paste0("Key: ", key))
+      message(paste0("Value: ", value))
+      message(paste0("Key hash: ", key_hash))
+      message(paste0("Value hash: ", base::get(key_hash, 
+            pos=.values, inherits=FALSE)))
+      ## // CHANGE JT
+      
+      .graphValueChange(sprintf('names(%s)', .label), ls(.values, all.names=TRUE))
+      .graphValueChange(sprintf('%s (all)', .label), as.list(.values))
+      .graphValueChange(sprintf('%s$%s', .label, key), value)
+      ## CHANGE JT //
+      .graphValueChange(sprintf('%s$%s', .label, key_hash), value_hash)
+      ## // CHANGE JT 
+      
+      dep.keys <- objects(
+        pos=.dependents,
+        pattern=paste('^\\Q', key, ':', '\\E', '\\d+$', sep=''),
+        all.names=TRUE
+      )
+      lapply(
+        mget(dep.keys, envir=.dependents),
+        function(ctx) {
+          ctx$invalidate()
+          NULL
+        }
+      )
+      invisible()
+    },
+    mset = function(lst) {
+      lapply(base::names(lst),
+        function(name) {
+          self$set(name, lst[[name]])
+        })
+    },
+    names = function() {
+      .graphDependsOn(.getReactiveEnvironment()$currentContext()$id,
+        sprintf('names(%s)', .label))
+      .namesDeps$register()
+      return(ls(.values, all.names=TRUE))
+    },
+    toList = function(all.names=FALSE) {
+      .graphDependsOn(.getReactiveEnvironment()$currentContext()$id,
+        sprintf('%s (all)', .label))
+      if (all.names)
+        .allValuesDeps$register()
+      
+      .valuesDeps$register()
+      
+      return(as.list(.values, all.names=all.names))
+    },
+    .setLabel = function(label) {
+      .label <<- label
+    }
+  )
+)
 
 
 # reactivevalues ------------------------------------------------------------
@@ -194,6 +321,17 @@ reactiveValues <- function(...) {
 
   values <- .createReactiveValues(ReactiveValues$new())
 
+  # Use .subset2() instead of [[, to avoid method dispatch
+  .subset2(values, 'impl')$mset(args)
+  values
+}
+reactiveValues2 <- function(...) {
+  args <- list(...)
+  if ((length(args) > 0) && (is.null(names(args)) || any(names(args) == "")))
+    stop("All arguments passed to reactiveValues() must be named.")
+  
+  values <- .createReactiveValues(ReactiveValues2$new())
+  
   # Use .subset2() instead of [[, to avoid method dispatch
   .subset2(values, 'impl')$mset(args)
   values
@@ -385,6 +523,80 @@ Observable <- R6Class(
     }
   )
 )
+Observable2 <- R6Class(
+  'Observable2',
+  portable = FALSE,
+  public = list(
+    ## CHANGED // 
+    .hash = "environment",
+    ## // CHANGED
+    .func = 'function',
+    .label = character(0),
+    .domain = NULL,
+    .dependents = 'Dependents',
+    .invalidated = logical(0),
+    .running = logical(0),
+    .value = NULL,
+    .visible = logical(0),
+    .execCount = integer(0),
+    .mostRecentCtxId = character(0),
+    
+    initialize = function(func, label = deparse(substitute(func)),
+      domain = getDefaultReactiveDomain()) {
+      if (length(formals(func)) > 0)
+        stop("Can't make a reactive expression from a function that takes one ",
+          "or more parameters; only functions without parameters can be ",
+          "reactive.")
+      .func <<- func
+      .label <<- label
+      .domain <<- domain
+      .dependents <<- Dependents$new()
+      .invalidated <<- TRUE
+      .running <<- FALSE
+      .execCount <<- 0L
+      .mostRecentCtxId <<- ""
+    },
+    getValue = function() {
+      .dependents$register()
+      
+      if (.invalidated || .running) {
+        self$.updateValue()
+      }
+      
+      .graphDependsOnId(getCurrentContext()$id, .mostRecentCtxId)
+      
+      if (identical(class(.value), 'try-error'))
+        stop(attr(.value, 'condition'))
+      
+      if (.visible)
+        .value
+      else
+        invisible(.value)
+    },
+    .updateValue = function() {
+      ctx <- Context$new(.domain, .label, type = 'observable',
+        prevId = .mostRecentCtxId)
+      .mostRecentCtxId <<- ctx$id
+      ctx$onInvalidate(function() {
+          .invalidated <<- TRUE
+          .dependents$invalidate()
+        })
+      .execCount <<- .execCount + 1L
+      
+      .invalidated <<- FALSE
+      
+      wasRunning <- .running
+      .running <<- TRUE
+      on.exit(.running <<- wasRunning)
+      
+      ctx$run(function() {
+          result <- withVisible(try(shinyCallingHandlers(.func()), silent=TRUE))
+          .visible <<- result$visible
+          .value <<- result$value
+        })
+    }
+  )
+)
 
 #' Create a reactive expression
 #'
@@ -446,6 +658,19 @@ reactive <- function(x, env = parent.frame(), quoted = FALSE, label = NULL,
   o <- Observable$new(fun, label, domain)
   registerDebugHook(".func", o, "Reactive")
   structure(o$getValue, observable = o, class = "reactive")
+}
+reactive2 <- function(x, env = parent.frame(), quoted = FALSE, label = NULL,
+  domain = getDefaultReactiveDomain()) {
+  fun <- exprToFunction(x, env, quoted)
+  # Attach a label and a reference to the original user source for debugging
+  if (is.null(label))
+    label <- sprintf('reactive(%s)', paste(deparse(body(fun)), collapse='\n'))
+  srcref <- attr(substitute(x), "srcref")
+  if (length(srcref) >= 2) attr(label, "srcref") <- srcref[[2]]
+  attr(label, "srcfile") <- srcFileOfRef(srcref[[1]])
+  o <- Observable2$new(fun, label, domain)
+  registerDebugHook(".func", o, "Reactive")
+  structure(o$getValue, observable = o, class = "reactive2")
 }
 
 #' @export
@@ -745,6 +970,40 @@ makeReactiveBinding <- function(symbol, env = parent.frame()) {
       values$value <- v
   })
 
+  invisible()
+}
+makeReactiveBinding2 <- function(symbol, env = parent.frame()) {
+  if (exists(symbol, where = env, inherits = FALSE)) {
+    initialValue <- get(symbol, pos = env, inherits = FALSE)
+    rm(list = symbol, pos = env, inherits = FALSE)
+  }
+  else
+    initialValue <- NULL
+  ## CHANGE JT //
+  values <- reactiveValues2(value = initialValue)
+  message("This is 'makeReactiveBinding2'")
+  print(class(values))
+  print(values)
+  message("Value:")
+  print(values$value)
+  message("Hash:")
+  print(values$value_hash)
+  
+  ## // CHANGE JT
+  makeActiveBinding(symbol, env=env, fun=function(v) {
+      if (missing(v))
+        values$value
+      ## CHANGE JT //
+      else {
+        values$value <- v
+        ## Make sure hash value is recomputed
+        values$value_hash <- digest::digest(v)
+        message("Hash new:")
+        print(values$value_hash)
+      }
+      ## // CHANGE JT
+    })
+  
   invisible()
 }
 
