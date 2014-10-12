@@ -1,17 +1,63 @@
+##------------------------------------------------------------------------------
+
+## Classes involved:
+## - Observable
+## - Dependents
+## - Map
+
+## 'Dependents' uses instance of 'Map' in field '.dependents'
+ctx <- .getReactiveEnvironment()$currentContext()
+      if (!.dependents$containsKey(ctx$id)) {
+        .dependents$set(ctx$id, ctx)
+
+##------------------------------------------------------------------------------
+
+## Changes //
+## - makeReactiveBinding2 --> reactiveValues2 -- .createReactiveValues2
+## --> ReactiveValues2
+
+## Most curious thing I've seen:
+## In 'ReactiveValues2' part where 'value' and 'value_hash' are set via
+## '.graphValueChange()':
+##    .graphValueChange(sprintf('%s$%s', .label, key), value)
+##    .graphValueChange(sprintf('%s$%s', .label, key_hash), value_hash)
+## I don't really understand how this actually works
+
+##------------------------------------------------------------------------------
+
+## Set option //
 options(shiny.suppressMissingContextError=TRUE)
 
-rm(x_1)
-rm(x_2)
-
-## Dependee //
+## Object 1 //
 x_1 <- 10
 # makeReactiveBinding("x_1")
 makeReactiveBinding2("x_1")
+# x_1
+
+x_2 <- 100
+# makeReactiveBinding("x_2")
+makeReactiveBinding2("x_2")
+x_2
+# rm(x_2)
+
+## Changes involved:
+## - reactiveValues2() --> ReactiveValues2 --> field 'value_hash.
+## - Change 'set' part to add computation of hash value
+
+## Object 2 //
+x_2 <- reactive2(x_1 * 2)
+
+## Changes involved:
+## - reactive2() --> Observable2 --> field '.hash'
+x_2()
+x_1
+
 
 attributes(values2)
 values2$
 ## Dependent //
 
+x_2 <- reactive2(x_3 + 10)
 
 
 x_2 <- reactive2(x_3 + 10)
@@ -105,22 +151,3 @@ function() {
 }
 
 
-##------------------------------------------------------------------------------
-
-## Classes involved:
-## - Observable
-## - Dependents
-## - Map
-
-##------------------------------------------------------------------------------
-
-## Changes //
-## - makeReactiveBinding2 --> reactiveValues2 -- .createReactiveValues2
-## --> ReactiveValues2
-
-## Most curious thing I've seen:
-## In 'ReactiveValues2' part where 'value' and 'value_hash' are set via
-## '.graphValueChange()':
-##    .graphValueChange(sprintf('%s$%s', .label, key), value)
-##    .graphValueChange(sprintf('%s$%s', .label, key_hash), value_hash)
-## I don't really understand how this actually works

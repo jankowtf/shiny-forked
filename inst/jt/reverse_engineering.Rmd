@@ -1,0 +1,369 @@
+---
+title: "Reverse Engineering"
+author: "Janko Thyson"
+date: "Saturday, October 11, 2014"
+output: html_document
+---
+
+## Classes involved
+
+- Observable
+- Dependents
+- Map
+
+`Dependents` uses instance of `Map` in field `.dependents`
+
+```{r, eval=FALSE}
+Dependents <- R6Class(
+  'Dependents',
+  portable = FALSE,
+  class = FALSE,
+  public = list(
+    .dependents = 'Map',
+
+    initialize = function() {
+      .dependents <<- Map$new()
+    },
+    register = function(depId=NULL, depLabel=NULL) {
+      ctx <- .getReactiveEnvironment()$currentContext()
+      if (!.dependents$containsKey(ctx$id)) {
+        .dependents$set(ctx$id, ctx)
+        ctx$onInvalidate(function() {
+          .dependents$remove(ctx$id)
+        })
+
+        if (!is.null(depId) && nchar(depId) > 0)
+          .graphDependsOnId(ctx$id, depId)
+        if (!is.null(depLabel))
+          .graphDependsOn(ctx$id, depLabel)
+      }
+    },
+    invalidate = function() {
+      lapply(
+        .dependents$values(),
+        function(ctx) {
+          ctx$invalidate()
+          NULL
+        }
+      )
+    }
+  )
+)
+```
+
+Important part:
+
+```{r, eval=FALSE}
+ctx <- .getReactiveEnvironment()$currentContext()
+      if (!.dependents$containsKey(ctx$id)) {
+        .dependents$set(ctx$id, ctx)
+```
+
+This is where the information about dependents is retrieved.
+
+Class `Map`
+
+```{r, eval=FALSE}
+Map <- R6Class(
+  'Map',
+  portable = FALSE,
+  public = list(
+    initialize = function() {
+      private$env <- new.env(parent=emptyenv())
+    },
+    get = function(key) {
+      env[[key]]
+    },
+    set = function(key, value) {
+      env[[key]] <- value
+      value
+    },
+    mset = function(...) {
+      args <- list(...)
+      if (length(args) == 0)
+        return()
+
+      arg_names <- names(args)
+      if (is.null(arg_names) || any(!nzchar(arg_names)))
+        stop("All elements must be named")
+
+      list2env(args, envir = env)
+    },
+    remove = function(key) {
+      if (!self$containsKey(key))
+        return(NULL)
+
+      result <- env[[key]]
+      rm(list=key, envir=env, inherits=FALSE)
+      result
+    },
+    containsKey = function(key) {
+      exists(key, envir=env, inherits=FALSE)
+    },
+    keys = function() {
+      # Sadly, this is much faster than ls(), because it doesn't sort the keys.
+      names(as.list(env, all.names=TRUE))
+    },
+    values = function() {
+      as.list(env, all.names=TRUE)
+    },
+    clear = function() {
+      private$env <- new.env(parent=emptyenv())
+      invisible(NULL)
+    },
+    size = function() {
+      length(env)
+    }
+  ),
+
+  private = list(
+    env = 'environment'
+  )
+)
+```
+
+## Dependency recognition mechanism
+
+Looking at the changes made in class `Observable2` this is what I currently understand of the dependency recognition mechanism:
+
+- Dependent 'x_1' is assigned ID value '1'
+- Its R6 instance (class 'ReactiveValues2') is set to field 'Map$private$env` with name `1`
+- The instance of class `Map` is the field value of `Dependents$.dependents`
+- The instance of `Dependents` is in turn the field value of `Observable2$.dependents`
+
+## Setting reactive objects
+
+I still don't fully understand the difference/implications of instances of class `ReactiveValues` vs. `Observable`. Or, to be more specific, I don't fully get why an `ReactiveValues` object has a `.dependents` field. Maybe that's for offering the possiblity to turn it into an object that itself has dependencies on others.
+
+### Changes involved
+
+- makeReactiveBinding2() --> reactiveValues2() -- .createReactiveValues2() --> ReactiveValues2 --> field `value_hash.
+- Change `set` part to add computation of hash value
+
+### Note
+In `ReactiveValues2` part where `value` and `value_hash` are set via `.graphValueChange()`:
+```{r}
+.graphValueChange(sprintf(`%s$%s`, .label, key), value)
+.graphValueChange(sprintf(`%s$%s`, .label, key_hash), value_hash)
+```
+
+I don`t really understand how this actually works. It has to do with this sort of "hidden environment layer" that `makeActiveBinding()` uses/provides.
+
+```{r, eval=FALSE}
+## Set option //
+options(shiny.suppressMissingContextError=TRUE)
+
+## Object 1 //
+x_1 <- 10
+# makeReactiveBinding("x_1")
+makeReactiveBinding2("x_1")
+x_1
+
+uid <- .computeObjectUid(id = "x_1", where = environment())
+registry <- getOption("shiny")$.registry
+ls(registry)
+registry[[uid]]$checksum
+x_1 <- 20
+# rm(x_1)
+
+## Object 2 //
+x_2 <- 100
+# makeReactiveBinding("x_2")
+makeReactiveBinding2("x_2")
+x_2
+# rm(x_2)
+```
+
+## Setting observing objects
+
+### Changes involved
+
+- `reactive2()` --> `exprToFunction2()` --> `Observable2` --> field `.hash`
+
+```{r}
+## Object 3 //
+x_3 <- reactive2(
+  {
+    "reactive: {id: x_1, where: where, as: ref_1}"
+    "reactive: {id: x_2, where: where, as: ref_2}"
+    ref_1 + ref_2 * 5
+  },
+  id = "x_3"
+)
+x_3
+x_1 <- 100
+x_1
+x_3
+x_2 <- 100
+x_3
+# rm(x_3)
+
+## Object 4 //
+rm(x_4)
+rm(x_5)
+rm(list = ".registry", envir = getOption("shiny"))
+require("yaml")
+x_4 <- reactive2(
+  {
+    "reactive: {id: x_5, where: where}"
+    x_5
+  },
+  id = "x_4"
+)
+x_4
+x_5 <- reactive2(
+  {
+    "reactive: {id: x_4, where: where}"
+    x_4
+  },
+  id = "x_5"
+)
+x_5
+x_4 <- 10
+x_4
+x_5
+x_5 <- 100
+x_5
+x_4
+x_5
+# rm(x_3)
+```
+
+### YAML: modify reactive function
+
+```{r}
+require("yaml")
+expr <- quote({
+  "reactive: {id: x_1, where: where, as: ref_1}"
+  "reactive: {id: x_2, where: where, as: ref_2}"
+    ref_1 + ref_2 * 2
+})
+.processReferenceYaml <- function(expr, where) {
+  idx_yaml <- which(sapply(expr, function(expr) {
+    any(grepl("^reactive:", expr))
+  }))
+  if (length(idx_yaml)) {
+    yaml <- sapply(idx_yaml, function(idx) expr[[idx]])
+    .parseYaml <- function(yaml) {
+      yaml_parsed <- lapply(seq(along=yaml), function(ii) {
+        out <- yaml.load(yaml[ii])[[1]]
+        if (is.null(out$where)) {
+          out$where <- as.name("where")
+        } else {
+          out$where <- as.name(out$where)
+        }
+        if (is.null(out$as)) {
+          out$as <- as.name(out$id)
+        } else {
+          out$as <- as.name(out$as)
+        }
+        nms[[ii]] <<- out$id
+        out
+      })
+      names(yaml_parsed) <- nms
+      yaml_parsed
+    }
+    yaml_parsed <- .parseYaml(yaml = yaml)
+    .constructGetExpressionFromYaml <- function(yaml) {
+      yaml_parsed <- .parseYaml(yaml = yaml)
+      expr_get <- lapply(yaml_parsed, function(el) {
+        substitute(AS <- get(x = ID, envir = WHERE, inherits = FALSE),
+                   list(AS = el$as, ID = el$id, WHERE = eval(el$where))
+                   )
+      })
+      expr_get
+    }
+    expr_add <- .constructGetExpressionFromYaml(yaml)
+    .updateReactiveExpression <- function(expr, expr_add, idx_yaml) {
+      for (ii in seq(along=idx_yaml)) {
+        expr[[idx_yaml[ii]]] <- expr_add[[ii]]
+      }
+      expr
+    }
+    out <- .updateReactiveExpression(expr = expr, expr_add, idx_yaml)
+  } else {
+    out <- expr
+  }
+  out
+}
+.processReferenceYaml(expr = expr, where = env)
+
+## Object 4 //
+x_4 <- reactive2(
+  {
+    "reactive: {id: x_1, where: where, as: ref_1}"
+    "reactive: {id: x_2, where: where, as: ref_2}"
+    ref_1 + ref_2 * 5
+  }
+)
+x_3()
+x_1 <- 100
+```
+
+### YAML: get hash values
+
+```{r}
+require("yaml")
+expr <- quote({
+  "reactive: {id: x_1, where: where, as: ref_1}"
+  "reactive: {id: x_2, where: where, as: ref_2}"
+    ref_1 + ref_2 * 2
+})
+.processReferenceYaml <- function(expr, where) {
+  .parseYaml(yaml)
+  expr_add <- .constructGetExpressionFromYaml(yaml)
+  
+}
+.processReferenceYaml(expr = expr, where = env)
+
+## Object 4 //
+x_4 <- reactive2(
+  {
+    "reactive: {id: x_1, where: where, as: ref_1}"
+    "reactive: {id: x_2, where: where, as: ref_2}"
+    ref_1 + ref_2 * 5
+  }
+)
+x_3()
+x_1 <- 100
+```
+
+## Implementing dependency recognition
+
+```{r}
+exprToFunction2
+```
+
+
+-----
+
+## Questions
+
+1. Q: How/where is the value of `key` determined when calling `{instance-ReactiveValues}$get(key)`?
+
+  Be `x` is an instance of class `ReactiveValues`:
+  It appears that running `x` (i.e. `print(x)` or `{env}$x`) will automatically be translated to `x$get(key)` (e.g. in `makeReactiveBinding()`: `values$value`). How is the value of `key` determined?
+
+  A: see S3 wrapper class `reactivevalues` and its S3 methods for `$`, `<-` etc.
+
+```{r}
+.createReactiveValues <- function(values = NULL, readonly = FALSE) {
+  structure(list(impl=values), class='reactivevalues', readonly=readonly)
+}
+`$.reactivevalues` <- function(x, name) {
+  .subset2(x, 'impl')$get(name)
+}
+x <- .createReactiveValues()
+# envir <- new.env()
+# envir$x <- x
+# envir$x
+
+x <- structure(list(value = "hello world!", hash = "abcd"), class = "Horst")
+`$.Horst` <- function(x, name) {
+  .subset2(x, 'hash')
+}
+envir <- new.env()
+envir$x <- x
+envir$x
+```
+

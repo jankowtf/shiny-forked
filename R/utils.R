@@ -407,7 +407,59 @@ exprToFunction <- function(expr, env=parent.frame(2), quoted=FALSE,
     makeFunction(body=expr_sub, env=env)
   }
 }
+## [@change: jat, start]
+exprToFunction2 <- function(expr, env=parent.frame(2), quoted=FALSE,
+  caller_offset=1) {
+  # Get the quoted expr from two calls back
+  expr_sub <- eval(substitute(substitute(expr)), parent.frame(caller_offset))
 
+  ## [@change: jat, start]
+  ## Retrieve dependencies from YAML markup
+  expr_sub <- .processReferenceYaml(expr = expr_sub, where = env)
+#   print(expr_sub)
+  ## [@change: jat, end]
+
+  # Check if expr is a function, making sure not to evaluate expr, in case it
+  # is actually an unquoted expression.
+  # If expr is a single token, then indexing with [[ will error; if it has multiple
+  # tokens, then [[ works. In the former case it will be a name object; in the
+  # latter, it will be a language object.
+  if (!is.null(expr_sub) && !is.name(expr_sub) && expr_sub[[1]] == as.name('function')) {
+    # Get name of function that called this function
+    called_fun <- sys.call(-1 * caller_offset)[[1]]
+
+    shinyDeprecated(msg = paste("Passing functions to '", called_fun,
+        "' is deprecated. Please use expressions instead. See ?", called_fun,
+        " for more information.", sep=""))
+    return(expr)
+  }
+
+  if (quoted) {
+    # expr is a quoted expression
+    makeFunction(body=expr, env=env)
+  } else {
+    # expr is an unquoted expression
+    makeFunction(body=expr_sub, env=env)
+#     print(tmp)
+  }
+}
+getReactiveReferenceInfo <- function(x, env=parent.frame(2), quoted=FALSE,
+  caller_offset=1) {
+  # Get the quoted expr from two calls back
+  expr_sub <- eval(substitute(substitute(x)), parent.frame(caller_offset))
+  yaml <- .getReferenceYaml(expr = expr_sub)
+  if (length(yaml$yaml)) {
+# tmp <- .parseYaml(yaml = yaml$yaml)
+# .computeObjectUid(id = tmp$x_1$id, where = eval(tmp$x_1$where))
+# .computeObjectUid(id = tmp$x_1$id, where = where)
+    .constructGetChecksumExpressionFromYaml(yaml$yaml, where = env)
+# envir <- new.env()
+# envir$.registry <- new.env()
+# options("shiny" = envir)
+# eval(out[[1]])
+  }
+}
+## [@change: jat, end]
 #' Install an expression as a function
 #'
 #' Installs an expression in the given environment as a function, and registers

@@ -13,6 +13,11 @@ Dependents <- R6Class(
     },
     register = function(depId=NULL, depLabel=NULL) {
       ctx <- .getReactiveEnvironment()$currentContext()
+      ## [@change: jat, start]
+#      message("Dependents/register()/ctx:")
+#      print(ctx)
+#      print(ls(ctx))
+      ## [@change: jat, end]
       if (!.dependents$containsKey(ctx$id)) {
         .dependents$set(ctx$id, ctx)
         ctx$onInvalidate(function() {
@@ -149,9 +154,10 @@ ReactiveValues2 <- R6Class(
   'ReactiveValues2',
   portable = FALSE,
   public = list(
-    ## CHANGE JT //
-    .hashs = "environment",
-    ## // CHANGE JT 
+    ## [@change: jat, start]
+    .hash_values = "environment",
+    .uid = "character",
+    ## [@change: jat, end]
     # For debug purposes
     .label = character(0),
     .values = 'environment',
@@ -162,14 +168,15 @@ ReactiveValues2 <- R6Class(
     .allValuesDeps = 'Dependents',
     # Dependents for all values
     .valuesDeps = 'Dependents',
-    
+
     initialize = function() {
       .label <<- paste('reactiveValues',
         p_randomInt(1000, 10000),
         sep="")
-      ## CHANGE JT //
-      .hashs <<- new.env(parent=emptyenv())
-      ## // CHANGE JT
+      ## [@change: jat, start]
+      .hash_values <<- new.env(parent=emptyenv())
+      .uid <<- character()
+      ## [@change: jat, end]
       .values <<- new.env(parent=emptyenv())
       .dependents <<- new.env(parent=emptyenv())
       .namesDeps <<- Dependents$new()
@@ -178,23 +185,55 @@ ReactiveValues2 <- R6Class(
     },
     get = function(key) {
       ctx <- .getReactiveEnvironment()$currentContext()
+      ## [@change: jat, start]
+#       message("ReactiveValues2/get()/ctx:")
+#       print(ctx)
+#       print(ls(ctx))
+#       message("ReactiveValues2/get()/ctx$id:")
+#       print(ctx$id)
+#       message("ReactiveValues2/get()/key:")
+#       print(key)
+      ## [@change: jat, end]
       dep.key <- paste(key, ':', ctx$id, sep='')
       if (!exists(dep.key, where=.dependents, inherits=FALSE)) {
+        ## [@change: jat, start]
+#         message("ReactiveValues2/get()/.label:")
+#         print(.label)
+#         message("ReactiveValues2/get()/dep.key:")
+#         print(dep.key)
+#         message("ReactiveValues2/get()/.dependents:")
+#         print(ls(.dependents))
+        ## [@change: jat, end]
         .graphDependsOn(ctx$id, sprintf('%s$%s', .label, key))
         assign(dep.key, ctx, pos=.dependents, inherits=FALSE)
+        ## [@change: jat, start]
+#         message("ReactiveValues2/get()/.dependents:")
+#         print(ls(.dependents))
+#         message("ReactiveValues2/get()/ctx$id:")
+#         print(ctx$id)
+        ## [@change: jat, end]
         ctx$onInvalidate(function() {
             rm(list=dep.key, pos=.dependents, inherits=FALSE)
           })
       }
-      
+
       if (!exists(key, where=.values, inherits=FALSE))
         NULL
-      else 
+      else
         base::get(key, pos=.values, inherits=FALSE)
     },
+    ## [@change: jat, start]
+    getHash = function() {
+      if (!exists(.label, where=.hash_values, inherits=FALSE)) {
+        hash_value <- digest::digest(self$.values$value)
+        assign(.label, hash_value, pos = .hash_values)
+      } else
+        base::get(.label, pos=.hash_values, inherits=FALSE)
+    },
+    ## [@change: jat, end]
     set = function(key, value) {
       hidden <- substr(key, 1, 1) == "."
-      
+
       if (exists(key, where=.values, inherits=FALSE)) {
         if (identical(base::get(key, pos=.values, inherits=FALSE), value)) {
           return(invisible())
@@ -203,34 +242,38 @@ ReactiveValues2 <- R6Class(
       else {
         .namesDeps$invalidate()
       }
-      
+
       if (hidden)
         .allValuesDeps$invalidate()
       else
         .valuesDeps$invalidate()
-      
+
       assign(key, value, pos=.values, inherits=FALSE)
-      ## CHANGE JT //
+      ## [@change: jat, start]
       ## Make sure hash value is computed and stored
-#      assign(key, digest::digest(value), pos=.hashs, inherits=FALSE)
+#      assign(key, digest::digest(value), pos=.hash_values, inherits=FALSE)
       ## --> Don't know how to access that
       key_hash <- paste0(key, "_hash")
       value_hash <- digest::digest(value)
       assign(key_hash, value_hash, pos=.values, inherits=FALSE)
-      message(paste0("Key: ", key))
-      message(paste0("Value: ", value))
-      message(paste0("Key hash: ", key_hash))
-      message(paste0("Value hash: ", base::get(key_hash, 
+      message(paste0("ReactiveValues2/set()/.label: ", .label))
+#       message(paste0("ReactiveValues2/set()/key: ", key))
+      message(paste0("Reactive/Values2/set()/value: ", value))
+#       message(paste0("Reactive/Values2/set()/key hash: ", key_hash))
+      message(paste0("Reactive/Values2/set()/value hash: ", base::get(key_hash,
             pos=.values, inherits=FALSE)))
-      ## // CHANGE JT
-      
+      ## [@change: jat, end]
+
       .graphValueChange(sprintf('names(%s)', .label), ls(.values, all.names=TRUE))
       .graphValueChange(sprintf('%s (all)', .label), as.list(.values))
       .graphValueChange(sprintf('%s$%s', .label, key), value)
-      ## CHANGE JT //
+      ## [@change: jat, start]
+      ## This makes sure that the hash value is assigned in "hidden parent
+      ## environment" (just like the actual value that can then be set
+      ## and retrieve)
       .graphValueChange(sprintf('%s$%s', .label, key_hash), value_hash)
-      ## // CHANGE JT 
-      
+      ## [@change: jat, end]
+
       dep.keys <- objects(
         pos=.dependents,
         pattern=paste('^\\Q', key, ':', '\\E', '\\d+$', sep=''),
@@ -262,9 +305,9 @@ ReactiveValues2 <- R6Class(
         sprintf('%s (all)', .label))
       if (all.names)
         .allValuesDeps$register()
-      
+
       .valuesDeps$register()
-      
+
       return(as.list(.values, all.names=all.names))
     },
     .setLabel = function(label) {
@@ -329,9 +372,9 @@ reactiveValues2 <- function(...) {
   args <- list(...)
   if ((length(args) > 0) && (is.null(names(args)) || any(names(args) == "")))
     stop("All arguments passed to reactiveValues() must be named.")
-  
+
   values <- .createReactiveValues(ReactiveValues2$new())
-  
+
   # Use .subset2() instead of [[, to avoid method dispatch
   .subset2(values, 'impl')$mset(args)
   values
@@ -527,9 +570,12 @@ Observable2 <- R6Class(
   'Observable2',
   portable = FALSE,
   public = list(
-    ## CHANGED // 
-    .hash = "environment",
-    ## // CHANGED
+    ## [@change: jat, start]
+    .checksums = "environment",
+    .cache = NULL,
+    .needs_update = TRUE,
+    .uid = character(0),
+    ## [@change: jat, end]
     .func = 'function',
     .label = character(0),
     .domain = NULL,
@@ -540,7 +586,7 @@ Observable2 <- R6Class(
     .visible = logical(0),
     .execCount = integer(0),
     .mostRecentCtxId = character(0),
-    
+
     initialize = function(func, label = deparse(substitute(func)),
       domain = getDefaultReactiveDomain()) {
       if (length(formals(func)) > 0)
@@ -555,19 +601,46 @@ Observable2 <- R6Class(
       .running <<- FALSE
       .execCount <<- 0L
       .mostRecentCtxId <<- ""
+      ## [@change: jat, start]
+      .checksums <<- new.env(parent = emptyenv())
+      .needs_update <<- TRUE
+      ## [@change: jat, end]
     },
     getValue = function() {
       .dependents$register()
-      
-      if (.invalidated || .running) {
+      ## [@change: jat, start]
+#       message("Observable2$getValue()/.dependents$.dependents$keys():")
+#       tmp_keys <- .dependents$.dependents$keys()
+#       print(tmp_keys)
+#       message("Observable2$getValue()/.dependents$.dependents$values():")
+#       print(.dependents$.dependents$values())
+#       message("Observable2$getValue()/.dependents$.dependents$values()/first value:")
+#       print(ls(.dependents$.dependents$values()[[tmp_keys[[1]]]]))
+#       message("Observable2$getValue()/.dependents$.dependents$private$env:")
+#       print(ls(.dependents$.dependents$private$env))
+
+      ## HERE:
+      ## Here would have to go a comparison of all hash values of dependents
+      ## in order to determine if an update is neccessary or not.
+      ## The check result would go into variable/field '.needs_update'
+      ## which in turn would then also considered inside the 'if()' part:
+      ##          if (.invalidated || .running || .needs_update)
+      ## Pseudo:
+      .checkIfUpdateIsNeeded <- function() {
+#        inst$getHash()
+        TRUE
+      }
+      .needs_update <- .checkIfUpdateIsNeeded()
+
+      if (.invalidated || .running || .needs_update) {
         self$.updateValue()
       }
-      
+      ## [@change: jat, end]
       .graphDependsOnId(getCurrentContext()$id, .mostRecentCtxId)
-      
+
       if (identical(class(.value), 'try-error'))
         stop(attr(.value, 'condition'))
-      
+
       if (.visible)
         .value
       else
@@ -576,19 +649,23 @@ Observable2 <- R6Class(
     .updateValue = function() {
       ctx <- Context$new(.domain, .label, type = 'observable',
         prevId = .mostRecentCtxId)
+#      message("Observable2$.updateValue()/ctx:")
+#      print(ctx)
+#      print(ls(ctx))
       .mostRecentCtxId <<- ctx$id
       ctx$onInvalidate(function() {
           .invalidated <<- TRUE
           .dependents$invalidate()
         })
       .execCount <<- .execCount + 1L
-      
+#      message("Observable2$.updateValue()/.execCount:")
+#      print(.execCount)
       .invalidated <<- FALSE
-      
+
       wasRunning <- .running
       .running <<- TRUE
       on.exit(.running <<- wasRunning)
-      
+
       ctx$run(function() {
           result <- withVisible(try(shinyCallingHandlers(.func()), silent=TRUE))
           .visible <<- result$visible
@@ -660,8 +737,8 @@ reactive <- function(x, env = parent.frame(), quoted = FALSE, label = NULL,
   structure(o$getValue, observable = o, class = "reactive")
 }
 reactive2 <- function(x, env = parent.frame(), quoted = FALSE, label = NULL,
-  domain = getDefaultReactiveDomain()) {
-  fun <- exprToFunction(x, env, quoted)
+  domain = getDefaultReactiveDomain(), id) {
+  fun <- exprToFunction2(x, env, quoted)
   # Attach a label and a reference to the original user source for debugging
   if (is.null(label))
     label <- sprintf('reactive(%s)', paste(deparse(body(fun)), collapse='\n'))
@@ -669,8 +746,113 @@ reactive2 <- function(x, env = parent.frame(), quoted = FALSE, label = NULL,
   if (length(srcref) >= 2) attr(label, "srcref") <- srcref[[2]]
   attr(label, "srcfile") <- srcFileOfRef(srcref[[1]])
   o <- Observable2$new(fun, label, domain)
+  ## [@change: jat, start]
+#   print(o)
+
+  ref_info <-getReactiveReferenceInfo(x = x, env = env)
+#   print(ref_info)
+#   checksums <- try(sapply(ref_info, function(ii) eval(ii$expr)))
+#   print(checksums)
+  tmp_buffer <- new.env()
+  tmp_buffer$from_cache <- FALSE
+  sapply(ref_info, function(ref) {
+    assign(ref$uid,
+      tryCatch(eval(ref$expr),
+        error = function(cond) {
+          tmp_buffer$from_cache <- TRUE
+          digest::digest(NULL)
+        }
+      ),
+      envir = o$.checksums)
+  })
+
+  ## Ensure registry entry and checksum //
+  if (is.null(getOption("shiny")$.registry)) {
+    envir <- new.env()
+    envir$.registry <- new.env()
+    options("shiny" = envir)
+  }
+  uid <- .computeObjectUid(id = id, where = eval(env))
+  o$.uid <- uid
+  hash_env <- new.env()
+  hash_env$id <- id
+  hash_env$uid <- uid
+  hash_env$where <- env
+
+  print(tmp_buffer$from_cache)
+  hash_env$checksum <- if (tmp_buffer$from_cache) {
+    digest::digest(o$.cache)
+  } else {
+    digest::digest(o$getValue())
+  }
+
+  assign(uid, hash_env, envir = getOption("shiny")$.registry)
+
   registerDebugHook(".func", o, "Reactive")
-  structure(o$getValue, observable = o, class = "reactive2")
+
+#   stop("intentionalStop")
+  makeActiveBinding(
+    id,
+    env = env,
+    fun = local({
+      o
+      function(v) {
+        if (missing(v)) {
+          message("----- get (reactive) -----")
+          if (length(refs <- ls(o$.checksums, all.names = TRUE))) {
+            needs_update <- sapply(refs, function(ref) {
+              ref_reg <- tryCatch(
+                get(ref, getOption("shiny")$.registry, inherits = FALSE),
+                error = function(cond) {
+                  tmp <- new.env()
+                  tmp$checksum <- digest::digest(NULL)
+                  tmp
+                }
+              )
+#               print(ref_reg)
+              checksum_reg <- ref_reg$checksum
+#               message("Checksum registry:")
+#               print(checksum_reg)
+              checksum_cache <- o$.checksums[[ref]]
+#               message("Checksum cached:")
+#               print(checksum_cache)
+              if (checksum_reg != checksum_cache) {
+                message(paste0("Update necessary due to: ", ref))
+                o$.needs_update <<- TRUE
+                ## Sync checksums //
+                o$.checksums[[ref]] <- checksum_reg
+                out <- TRUE
+              } else {
+                out <- FALSE
+              }
+            })
+# print(needs_update)
+
+            if (o$.needs_update) {
+              message("Updating ...")
+              o$.cache <<- tryCatch(
+                o$getValue(),
+                error = function(cond) {
+                  NULL
+                }
+              )
+              o$.needs_update <<- FALSE
+            }
+          }
+        } else {
+          message("----- set (reactive) -----")
+          o$.cache <<- v
+          checksum <- digest::digest(v)
+          print(o$.uid)
+          assign("checksum", checksum, envir = getOption("shiny")$.registry[[o$.uid]])
+        }
+        o$.cache
+      }
+    })
+  )
+#   structure(o$getValue, observable = o, class = "reactive2")
+#   structure(o$.cache, observable = o, class = "reactive2")
+  return(o$.cache)
 }
 
 #' @export
@@ -979,31 +1161,97 @@ makeReactiveBinding2 <- function(symbol, env = parent.frame()) {
   }
   else
     initialValue <- NULL
-  ## CHANGE JT //
+  ## [@change: jat, start]
   values <- reactiveValues2(value = initialValue)
-  message("This is 'makeReactiveBinding2'")
-  print(class(values))
-  print(values)
-  message("Value:")
-  print(values$value)
-  message("Hash:")
-  print(values$value_hash)
-  
-  ## // CHANGE JT
-  makeActiveBinding(symbol, env=env, fun=function(v) {
-      if (missing(v))
-        values$value
-      ## CHANGE JT //
-      else {
-        values$value <- v
-        ## Make sure hash value is recomputed
-        values$value_hash <- digest::digest(v)
-        message("Hash new:")
-        print(values$value_hash)
+#   message("makeReactiveBinding2/values:")
+#   print(class(values))
+#   print(values)
+#   message("makeReactiveBinding2/values$value ---- start")
+#   print(values$value)
+#   message("makeReactiveBinding2/values$value ---- end")
+#   message("makeReactiveBinding2/values$value_hash ---- start")
+#   print(values$value_hash)
+#   message("makeReactiveBinding2/values$value_hash ---- end")
+  inst <- .subset2(values, "impl")
+  if (!length(inst$.uid)) {
+    inst$.uid <- .computeObjectUid(id = symbol, where = env)
+  }
+  ## Ensure registry entry and checksum //
+  if (is.null(getOption("shiny")$.registry)) {
+    envir <- new.env()
+    envir$.registry <- new.env()
+    options("shiny" = envir)
+  }
+  hash_env <- new.env()
+  hash_env$id <- symbol
+  hash_env$uid <- inst$.uid
+  hash_env$where <- env
+  hash_env$checksum <- digest::digest(values$value)
+  assign(inst$.uid, hash_env, envir = getOption("shiny")$.registry)
+  ## [@change: jat, end]
+
+  makeActiveBinding(
+    symbol,
+    env = env,
+    local({
+      fun=function(v) {
+        if (missing(v)) {
+          ## [@change: jat, start]
+          ## Object 'values' is an instance of class 'ReactiveValues'
+          ## Field '.dependents' contains the lables 'values:{id}' of
+          ## all object that this object depends on.
+          ## It's also sort of a hidden environment containing these variables:
+          ## - value: the actual value assigned to symbol (shiny)
+          ## - value_hash: the hash value (jat)
+          message("----- get -----")
+          inst <- .subset2(values, "impl")
+#           message("get()/impl:")
+#           print(inst)
+          message("get()/.label:")
+          print(inst$.label)
+  #         message("get()/values:")
+  #         print(values)
+  #         print(ls(values))
+  #         message("get()/values/attributes:")
+  #         print(attributes(values))
+  #         message("get()/values/value_hash ---- start")
+  #         print(values$value_hash)
+  #         message("get()/values/value_hash ---- end")
+  #         message("get()/ReactiveValues2/.allValuesDeps:")
+  #         print(ls(inst$.allValuesDeps))
+  #         print(inst$.allValuesDeps$self)
+  #         print(ls(inst$.allValuesDeps$self))
+  #         message("get()/ReactiveValues2/.dependents:")
+  #         print(ls(inst$.dependents))
+  #         message("Field .hash_values:")
+  #         print(ls(inst$.hash_values))
+  #         message("Field .namesDeps:")
+  #         print(ls(inst$.namesDeps))
+  #         message("Field .valuesDeps:")
+  #         print(ls(inst$.valuesDeps))
+#             message("get()/inst:ReactiveValues2/getHash():")
+#             print(inst$getHash())
+            ## UIDs //
+#             message("get()/inst:ReactiveValues2/uid:")
+#             print(inst$.uid)
+          ## [@change: jat, end]
+          values$value
+        } else {
+          values$value <- v
+          ## [@change: jat, start]
+          message("----- set -----")
+          ## Make sure checksum is recomputed
+          checksum <- digest::digest(v)
+          values$value_hash <- checksum
+          message("set()/new checksum:")
+          print(checksum)
+          assign("checksum", checksum, envir = getOption("shiny")$.registry[[inst$.uid]])
+          ## [@change: jat, end]
+        }
       }
-      ## // CHANGE JT
     })
-  
+  )
+
   invisible()
 }
 
