@@ -147,7 +147,7 @@ In `ReactiveValues2` part where `value` and `value_hash` are set via `.graphValu
 .graphValueChange(sprintf(`%s$%s`, .label, key_hash), value_hash)
 ```
 
-I don`t really understand how this actually works. It has to do with this sort of "hidden environment layer" that `makeActiveBinding()` uses/provides.
+I don't really understand how this actually works. It has to do with this sort of "hidden environment layer" that `makeActiveBinding()` uses/provides.
 
 ```{r, eval=FALSE}
 ## Set option //

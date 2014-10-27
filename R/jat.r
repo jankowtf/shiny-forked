@@ -111,3 +111,20 @@
     )
   ))
 }
+
+getReactiveReferenceInfo <- function(x, env=parent.frame(2), quoted=FALSE,
+  caller_offset=1) {
+  # Get the quoted expr from two calls back
+  expr_sub <- eval(substitute(substitute(x)), parent.frame(caller_offset))
+  yaml <- .getReferenceYaml(expr = expr_sub)
+  if (length(yaml$yaml)) {
+# tmp <- .parseYaml(yaml = yaml$yaml)
+# .computeObjectUid(id = tmp$x_1$id, where = eval(tmp$x_1$where))
+# .computeObjectUid(id = tmp$x_1$id, where = where)
+    .constructGetChecksumExpressionFromYaml(yaml$yaml, where = env)
+# envir <- new.env()
+# envir$.registry <- new.env()
+# options("shiny" = envir)
+# eval(out[[1]])
+  }
+}
