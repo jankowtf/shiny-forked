@@ -1,15 +1,25 @@
 ---
 title: "Reverse Engineering"
 author: "Janko Thyson"
-date: "Saturday, October 11, 2014"
+date: "Saturday, October 30, 2014"
 output: html_document
 ---
 
-## Classes involved
+```{r, message=FALSE, cache=TRUE}
+require("shiny")
+options(shiny.suppressMissingContextError=TRUE)
+```
 
-- Observable
-- Dependents
-- Map
+## Trying to understand the dependency recognition mechanism
+
+### Classes involved
+
+1. For reactive source objects: `ReactiveValues`
+2. For observables:
+
+  - `Observable`
+  - `Dependents`
+  - `Map`
 
 `Dependents` uses instance of `Map` in field `.dependents`
 
@@ -59,7 +69,6 @@ ctx <- .getReactiveEnvironment()$currentContext()
         .dependents$set(ctx$id, ctx)
 ```
 
-This is where the information about dependents is retrieved.
 
 Class `Map`
 
@@ -122,47 +131,65 @@ Map <- R6Class(
 )
 ```
 
-## Dependency recognition mechanism
+Seems like this is where the information about dependents is actually stored:
 
-Looking at the changes made in class `Observable2` this is what I currently understand of the dependency recognition mechanism:
+```
+{Map}$private$env
+```
 
-- Dependent 'x_1' is assigned ID value '1'
-- Its R6 instance (class 'ReactiveValues2') is set to field 'Map$private$env` with name `1`
+### Current findings and guesses
+
+Looking at the tracing changes made in classes `ReactiveValues2` and `Observable2` this is what I currently understand of or are the current guesses about the dependency recognition mechanism:
+
+- *Something* is assigned to ID value '1' and put in a list element in `.dependents$private$env` (`.dependents` is an instance of `Map`). 
+
+What exactly this something is, that I don't fully understand yet. As I set *two* reactive sources yet there only exists *one* entry, I'm suggesting that this *something* is the instance of `ReactiveValues` which contains all reactive source objects that have been created in the same context?
+
 - The instance of class `Map` is the field value of `Dependents$.dependents`
+
 - The instance of `Dependents` is in turn the field value of `Observable2$.dependents`
 
-## Setting reactive objects
+- However, I still don't understand how when executing a reactive expression (created via `reactive()`) actually determines/recognizes all of its *dependencies* (which seem to be reffered to as *dependents*? The wording kind of confuses me regarding how depends on what ;-)). 
 
-I still don't fully understand the difference/implications of instances of class `ReactiveValues` vs. `Observable`. Or, to be more specific, I don't fully get why an `ReactiveValues` object has a `.dependents` field. Maybe that's for offering the possiblity to turn it into an object that itself has dependencies on others.
+    - How is that environment in `.dependents$private$env` with ID `1` actually processed/used? 
+    - Does it have something to do with the `.graphStack` and its related functions (e.g. `.graphDependsOnId`)? 
+    - If so, how can I use this information to see what's going on before everything is invalidated again?
 
-### Changes involved
+- The decision "from cache" vs. "update" seems to be made in `Observable$getValue()` and has clearly something to do with this *invalidation* mechanism which I also do not really understand yet: if `!.invalidated` (which I'm guessing means "no change in source object") `-->` from cache, else run `$.updateValue()`.
 
-- makeReactiveBinding2() --> reactiveValues2() -- .createReactiveValues2() --> ReactiveValues2 --> field `value_hash.
-- Change `set` part to add computation of hash value
+### Reactive source objects
 
-### Note
+### Changes made for reverse engineering 
+
+```
+makeReactiveBinding2() --> reactiveValues2() -- .createReactiveValues2() --> ReactiveValues2 --> field `value_hash.
+```
+
+Changed `set` part to add computation of checksum value
+
+#### Note
 In `ReactiveValues2` part where `value` and `value_hash` are set via `.graphValueChange()`:
-```{r}
+```{r, eval=FALSE}
 .graphValueChange(sprintf(`%s$%s`, .label, key), value)
 .graphValueChange(sprintf(`%s$%s`, .label, key_hash), value_hash)
 ```
 
-I don't really understand how this actually works. It has to do with this sort of "hidden environment layer" that `makeActiveBinding()` uses/provides.
+#### Example
 
-```{r, eval=FALSE}
-## Set option //
+```{r, eval=FALSE, cache.vars=TRUE}
 options(shiny.suppressMissingContextError=TRUE)
-
 ## Object 1 //
 x_1 <- 10
 # makeReactiveBinding("x_1")
 makeReactiveBinding2("x_1")
 x_1
 
-uid <- .computeObjectUid(id = "x_1", where = environment())
-registry <- getOption("shiny")$.registry
-ls(registry)
-registry[[uid]]$checksum
+if (FALSE) {
+  uid <- .computeObjectUid(id = "x_1", where = environment())
+  registry <- getOption("shiny")$.registry
+  ls(registry)
+  registry[[uid]]$checksum
+}
 x_1 <- 20
 # rm(x_1)
 
@@ -174,166 +201,74 @@ x_2
 # rm(x_2)
 ```
 
-## Setting observing objects
+### Reactive conductors / reactive expressions
 
-### Changes involved
+#### Changes made for reverse engineering
 
-- `reactive2()` --> `exprToFunction2()` --> `Observable2` --> field `.hash`
+- `reactive3()` --> `exprToFunction2()` --> `Observable2` --> field `.hash`
+
+#### Example 
+
+```{r, cache.vars=TRUE}
+options(shiny.suppressMissingContextError=TRUE)
+## Object 3 //
+x_3 <- shiny:::reactive3((x_1 + x_2) * 2)
+x_3()
+```
+
+Trying to figure out where the information about dependencies is drawn from:
+
 
 ```{r}
-## Object 3 //
-x_3 <- reactive2(
-  {
-    "reactive: {id: x_1, where: where, as: ref_1}"
-    "reactive: {id: x_2, where: where, as: ref_2}"
-    ref_1 + ref_2 * 5
-  },
-  id = "x_3"
-)
-x_3
+####################################
+## Instance of class `Observable2` #
+####################################
+
+## --> assigned as global variable in `reactive3()`
+
+ls(o$.dependents, all.names = TRUE)
+ls(o$.dependents$.dependents$private$env)
+ls(o$.dependents$.dependents$values())
+ls(o$.dependents$.dependents$get("1"))
+
+#######################################
+## Instance of class `reactiveValues` #
+#######################################
+
+inst
+## --> assigned as global variable in "get" operation of `makeReactiveBinding()`
+
+inst$.label
+inst$.values$value
+## --> corresponds to `reactiveValues` instance of reactive source `x_2`
+
+## Context //
+## --> assigned as global variable in `Observable2$.updateValue()`
+ls(ctx, all.names = TRUE)
+ctx$.domain
+
+## Field `dependents` //
+ls(inst$.dependents)
+
+## Field `.allValuesDeps` //
+ls(inst$.allValuesDeps, all.names = TRUE)
+ls(inst$.allValuesDeps$.dependents$private$env)
+inst$.allValuesDeps$register
+
+## Field `.namesDeps` //
+ls(inst$.namesDeps, all.names = TRUE)
+ls(inst$.namesDeps$.dependents$private$env)
+
+## Field value //
+inst$.values$value
+
 x_1 <- 100
 x_1
-x_3
+x_3()
 x_2 <- 100
-x_3
-# rm(x_3)
-
-## Object 4 //
-rm(x_4)
-rm(x_5)
-rm(list = ".registry", envir = getOption("shiny"))
-require("yaml")
-x_4 <- reactive2(
-  {
-    "reactive: {id: x_5, where: where}"
-    x_5
-  },
-  id = "x_4"
-)
-x_4
-x_5 <- reactive2(
-  {
-    "reactive: {id: x_4, where: where}"
-    x_4
-  },
-  id = "x_5"
-)
-x_5
-x_4 <- 10
-x_4
-x_5
-x_5 <- 100
-x_5
-x_4
-x_5
+x_3()
 # rm(x_3)
 ```
-
-### YAML: modify reactive function
-
-```{r}
-require("yaml")
-expr <- quote({
-  "reactive: {id: x_1, where: where, as: ref_1}"
-  "reactive: {id: x_2, where: where, as: ref_2}"
-    ref_1 + ref_2 * 2
-})
-.processReferenceYaml <- function(expr, where) {
-  idx_yaml <- which(sapply(expr, function(expr) {
-    any(grepl("^reactive:", expr))
-  }))
-  if (length(idx_yaml)) {
-    yaml <- sapply(idx_yaml, function(idx) expr[[idx]])
-    .parseYaml <- function(yaml) {
-      yaml_parsed <- lapply(seq(along=yaml), function(ii) {
-        out <- yaml.load(yaml[ii])[[1]]
-        if (is.null(out$where)) {
-          out$where <- as.name("where")
-        } else {
-          out$where <- as.name(out$where)
-        }
-        if (is.null(out$as)) {
-          out$as <- as.name(out$id)
-        } else {
-          out$as <- as.name(out$as)
-        }
-        nms[[ii]] <<- out$id
-        out
-      })
-      names(yaml_parsed) <- nms
-      yaml_parsed
-    }
-    yaml_parsed <- .parseYaml(yaml = yaml)
-    .constructGetExpressionFromYaml <- function(yaml) {
-      yaml_parsed <- .parseYaml(yaml = yaml)
-      expr_get <- lapply(yaml_parsed, function(el) {
-        substitute(AS <- get(x = ID, envir = WHERE, inherits = FALSE),
-                   list(AS = el$as, ID = el$id, WHERE = eval(el$where))
-                   )
-      })
-      expr_get
-    }
-    expr_add <- .constructGetExpressionFromYaml(yaml)
-    .updateReactiveExpression <- function(expr, expr_add, idx_yaml) {
-      for (ii in seq(along=idx_yaml)) {
-        expr[[idx_yaml[ii]]] <- expr_add[[ii]]
-      }
-      expr
-    }
-    out <- .updateReactiveExpression(expr = expr, expr_add, idx_yaml)
-  } else {
-    out <- expr
-  }
-  out
-}
-.processReferenceYaml(expr = expr, where = env)
-
-## Object 4 //
-x_4 <- reactive2(
-  {
-    "reactive: {id: x_1, where: where, as: ref_1}"
-    "reactive: {id: x_2, where: where, as: ref_2}"
-    ref_1 + ref_2 * 5
-  }
-)
-x_3()
-x_1 <- 100
-```
-
-### YAML: get hash values
-
-```{r}
-require("yaml")
-expr <- quote({
-  "reactive: {id: x_1, where: where, as: ref_1}"
-  "reactive: {id: x_2, where: where, as: ref_2}"
-    ref_1 + ref_2 * 2
-})
-.processReferenceYaml <- function(expr, where) {
-  .parseYaml(yaml)
-  expr_add <- .constructGetExpressionFromYaml(yaml)
-  
-}
-.processReferenceYaml(expr = expr, where = env)
-
-## Object 4 //
-x_4 <- reactive2(
-  {
-    "reactive: {id: x_1, where: where, as: ref_1}"
-    "reactive: {id: x_2, where: where, as: ref_2}"
-    ref_1 + ref_2 * 5
-  }
-)
-x_3()
-x_1 <- 100
-```
-
-## Implementing dependency recognition
-
-```{r}
-exprToFunction2
-```
-
 
 -----
 

@@ -13,21 +13,35 @@ Dependents <- R6Class(
     },
     register = function(depId=NULL, depLabel=NULL) {
       ctx <- .getReactiveEnvironment()$currentContext()
-      ## [@change: jat, start]
-#      message("Dependents/register()/ctx:")
-#      print(ctx)
-#      print(ls(ctx))
-      ## [@change: jat, end]
+message("Dependents/register()/ctx$id:")
+print(ctx$id)
+print(ls(ctx))
+message("Dependents/register()/!.dependents$containsKey(ctx$id):")
+print(!.dependents$containsKey(ctx$id))
       if (!.dependents$containsKey(ctx$id)) {
+message("Dependents/register()/.dependents$private$env/before set:")
+print(ls(.dependents$private$env))
         .dependents$set(ctx$id, ctx)
+message("Dependents/register()/.dependents$private$env/after set:")
+print(ls(.dependents$private$env))
+print(.dependents$values())
+print(ls(.dependents$values()[["1"]]))
         ctx$onInvalidate(function() {
           .dependents$remove(ctx$id)
         })
 
-        if (!is.null(depId) && nchar(depId) > 0)
+        if (!is.null(depId) && nchar(depId) > 0) {
+message(".graphDependsOnId/1")
+print(ctx$id)
+print(depId)
           .graphDependsOnId(ctx$id, depId)
-        if (!is.null(depLabel))
+        }
+        if (!is.null(depLabel)) {
+message(".graphDependsOnId/2")
+print(ctx$id)
+print(depLabel)
           .graphDependsOn(ctx$id, depLabel)
+        }
       }
     },
     invalidate = function() {
@@ -636,7 +650,15 @@ Observable2 <- R6Class(
         self$.updateValue()
       }
       ## [@change: jat, end]
+# message("Observable2/.graphDependsOnId:")
+# message("current context:")
+# print(getCurrentContext()$id)
+# message("most recent context:")
+# print(.mostRecentCtxId)
       .graphDependsOnId(getCurrentContext()$id, .mostRecentCtxId)
+# message("Observable2/.graphStack:")
+# print(.graphStack$private$stack)
+# assign(".graphStack_saved", .graphStack, .GlobalEnv)
 
       if (identical(class(.value), 'try-error'))
         stop(attr(.value, 'condition'))
@@ -649,6 +671,7 @@ Observable2 <- R6Class(
     .updateValue = function() {
       ctx <- Context$new(.domain, .label, type = 'observable',
         prevId = .mostRecentCtxId)
+      assign("ctx", ctx, .GlobalEnv)
 #      message("Observable2$.updateValue()/ctx:")
 #      print(ctx)
 #      print(ls(ctx))
@@ -853,6 +876,22 @@ reactive2 <- function(x, env = parent.frame(), quoted = FALSE, label = NULL,
 #   structure(o$getValue, observable = o, class = "reactive2")
 #   structure(o$.cache, observable = o, class = "reactive2")
   return(o$.cache)
+}
+
+#' @export
+reactive3 <- function(x, env = parent.frame(), quoted = FALSE, label = NULL,
+                     domain = getDefaultReactiveDomain()) {
+  fun <- exprToFunction(x, env, quoted)
+  # Attach a label and a reference to the original user source for debugging
+  if (is.null(label))
+    label <- sprintf('reactive(%s)', paste(deparse(body(fun)), collapse='\n'))
+  srcref <- attr(substitute(x), "srcref")
+  if (length(srcref) >= 2) attr(label, "srcref") <- srcref[[2]]
+  attr(label, "srcfile") <- srcFileOfRef(srcref[[1]])
+  o <- Observable2$new(fun, label, domain)
+assign("o", o, .GlobalEnv)
+  registerDebugHook(".func", o, "Reactive")
+  structure(o$getValue, observable = o, class = "reactive")
 }
 
 #' @export
@@ -1205,6 +1244,7 @@ makeReactiveBinding2 <- function(symbol, env = parent.frame()) {
           ## - value_hash: the hash value (jat)
           message("----- get -----")
           inst <- .subset2(values, "impl")
+          assign("inst", inst, .GlobalEnv)
 #           message("get()/impl:")
 #           print(inst)
           message("get()/.label:")
